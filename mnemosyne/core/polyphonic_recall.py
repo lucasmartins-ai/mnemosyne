@@ -972,8 +972,11 @@ class PolyphonicRecallEngine:
             if not cursor.fetchone():
                 return []
 
-            # Get memories from last 7 days
-            week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+            # Get memories from last 7 days. working_memory.timestamp is naive UTC
+            # (the beam writers stamp datetime.now(timezone.utc).replace(tzinfo=None)),
+            # so the cutoff has to be naive UTC too — a local `now` compares a UTC string
+            # against a local one and the window shifts by the host offset. #1094.
+            week_ago = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)).isoformat()
             echo_clause, echo_params = exclusion_sql(excluded_wm_ids)
             cursor.execute(f"""
                 SELECT id, content, timestamp, importance
@@ -985,19 +988,22 @@ class PolyphonicRecallEngine:
 
             results = []
             for row in cursor.fetchall():
-                # Calculate temporal score. Timestamps may be naive-local
-                # (production writers) or aware-UTC (imports/migrations):
-                # normalize to naive before subtracting or fromisoformat
-                # raises 'can't subtract offset-naive and offset-aware'.
+                # Calculate temporal score. A naive value is UTC (the storage contract
+                # that #1087 settled for canonical_facts, and what beam.py writes here);
+                # an aware value is normalised to UTC rather than to local. Converting to
+                # local with a bare astimezone() then subtracting local `now` is the same
+                # value on both sides, so it looks right — but a row stamped at UTC reads
+                # as if it were `offset` hours older than it is, and the ranking is off by
+                # exactly the host offset. #1094.
                 try:
                     row_dt = datetime.fromisoformat(row["timestamp"])
                 except (TypeError, ValueError):
                     continue
                 if row_dt.tzinfo is not None:
-                    row_dt = row_dt.astimezone().replace(tzinfo=None)
-                age = datetime.now() - row_dt
+                    row_dt = row_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                age = datetime.now(timezone.utc).replace(tzinfo=None) - row_dt
                 age_days = age.total_seconds() / 86400
-                temporal_score = np.exp(-age_days / 7)  # 7-day half-life
+                temporal_score = np.exp(-age_days / 7)  # 7-day time constant (unchanged)
 
                 results.append(RecallResult(
                     memory_id=row["id"],
