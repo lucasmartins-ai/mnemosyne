@@ -156,18 +156,24 @@ def test_older_rows_rank_below_newer_ones(db, non_utc_tz):
 
 
 def test_seven_day_window_is_utc(db, non_utc_tz):
-    """The window boundary is 7 days in UTC, for naive rows and for non-zero offsets.
+    """The window boundary is 7 days in UTC, for naive rows and for offset rows.
 
-    The offset rows are the load-bearing ones: these are TEXT columns, so a TEXT comparison
-    tests an offset-bearing row against its written digits rather than its instant. A row at
-    6d23h written as +05:00 reads as 5d18h of wall clock, and a row at 7d1h written as -05:00
-    reads as 7d6h — both land on the wrong side of a raw comparison and the right side of
-    julianday().
+    The offsets are chosen so each row's *written* digits fall on the wrong side of a TEXT
+    comparison, which is the defect this pins. dplush's review of #1097 caught the first
+    attempt at these cases: I put "inside" at +05:00 and "outside" at -05:00, which moves both
+    rows further away from the boundary and so passes even with raw TEXT comparison — the
+    tests could not tell julianday() from its defect. Reversing the offsets is what makes
+    them discriminating:
+
+        inside  6d23h written -05:00  reads as 7d00h of wall clock -> wrongly excluded
+        outside 7d1h  written +05:00  reads as 6d20h of wall clock -> wrongly included
+
+    With julianday() both land correctly, because it compares instants.
     """
     _insert(db, "inside", age_hours=24 * 6 + 23)   # 6d23h
     _insert(db, "outside", age_hours=24 * 7 + 1)  # 7d1h
-    _insert(db, "inside_offset", age_hours=24 * 6 + 23, aware=True, offset_hours=5)
-    _insert(db, "outside_offset", age_hours=24 * 7 + 1, aware=True, offset_hours=-5)
+    _insert(db, "inside_offset", age_hours=24 * 6 + 23, aware=True, offset_hours=-5)
+    _insert(db, "outside_offset", age_hours=24 * 7 + 1, aware=True, offset_hours=5)
 
     ids = {r.memory_id for r in _temporal(db)}
     assert "inside" in ids and "inside_offset" in ids, sorted(ids)
@@ -177,17 +183,19 @@ def test_seven_day_window_is_utc(db, non_utc_tz):
 def test_mixed_formats_admit_the_newest_before_limit(db, non_utc_tz):
     """25 rows, half naive and half offset-bearing: admission must follow the instant.
 
-    Interleaved on purpose. With a TEXT comparison the offset rows sort by their written
-    digits, so the wrong five get cut by LIMIT 20. This is the selection defect #1094 names,
-    and it is invisible in a same-format table.
+    Asserts the complete ordered id list, not the length and the two extremes. Length 20 with
+    m00 present and m24 absent is also satisfied by the wrong twenty rows — dplush's review of
+    #1097 showed this case passing under a raw-TEXT mutation that admitted an older row while
+    dropping a newer one. The exact list is the only assertion that cannot survive that.
+
+    Rows are interleaved and the odd ones carry +05:00, so their written digits are five hours
+    behind their instant: under TEXT ordering they sink and displace newer naive rows.
     """
     for i in range(25):
         _insert(db, f"m{i:02d}", age_hours=i, aware=bool(i % 2), offset_hours=5)
 
     ids = [r.memory_id for r in _temporal(db)]
-    assert len(ids) == 20, len(ids)
-    assert "m00" in ids, "the newest row was not admitted"
-    assert "m24" not in ids, "the oldest row was admitted; the cut is not by recency"
+    assert ids == [f"m{i:02d}" for i in range(20)], ids
 
 
 def test_invalid_and_null_timestamps_are_skipped(db, non_utc_tz):
