@@ -977,9 +977,6 @@ class PolyphonicRecallEngine:
             # so the cutoff has to be naive UTC too — a local `now` compares a UTC string
             # against a local one and the window shifts by the host offset. #1094.
             #
-            # One now for the whole query, not one per row: rows in a single result set were
-            # otherwise aged against slightly different clocks.
-            #
             # julianday() rather than a raw `timestamp > ?`: these are TEXT columns, so a
             # TEXT comparison orders an offset-bearing row by its written digits rather than
             # by its instant, which gets both window membership and pre-LIMIT chronology
@@ -991,9 +988,10 @@ class PolyphonicRecallEngine:
             # form. That is the accepted price — #1094 requires the instant-correct
             # behaviour, and an expression index on julianday(timestamp) would restore the
             # SEARCH but is a schema migration, which is not authorised here.
-            # tests/test_temporal_query_plan.py pins this plan and this budget; if an
-            # expression index ever lands, the plan assertion flips to SEARCH and that
-            # test is the thing to revisit.
+            # tests/test_temporal_query_plan.py pins this plan and this budget on a synthetic
+            # 50k fixture — a regression guard, not an execution bound. If an expression index
+            # ever lands, the plan assertion flips to SEARCH and that test is the thing to
+            # revisit.
             now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
             week_ago = (now_utc - timedelta(days=7)).isoformat()
             echo_clause, echo_params = exclusion_sql(excluded_wm_ids)
