@@ -980,15 +980,20 @@ class PolyphonicRecallEngine:
             # One now for the whole query, not one per row: rows in a single result set were
             # otherwise aged against slightly different clocks.
             #
-            # The raw `timestamp > ?` is kept deliberately. These are TEXT columns, so an
-            # offset-bearing value compares on its written digits rather than its instant —
-            # julianday() fixes that, and I measured it: on 50k rows, 0.02 ms -> 4.37 ms with
-            # the plan falling from SEARCH USING INDEX to SCAN + temp B-tree, because the
-            # function is not indexable under the existing index. An expression index on
-            # julianday(timestamp) restores the SEARCH at 0.02 ms, but that is a schema
-            # migration, which is outside the scope dplush set (#1094: "no migration, no
-            # historical offset reconstruction"). The ordering defect for mixed-format rows
-            # is real and is recorded for a follow-up rather than traded for a 200x scan.
+            # julianday() rather than a raw `timestamp > ?`: these are TEXT columns, so a
+            # TEXT comparison orders an offset-bearing row by its written digits rather than
+            # by its instant, which gets both window membership and pre-LIMIT chronology
+            # wrong for mixed-format rows.
+            #
+            # The cost is a full scan: julianday() is not indexable under idx_wm_timestamp,
+            # so the plan degrades from SEARCH USING INDEX to SCAN + temp B-tree. Measured
+            # locally on 50k rows, median of 20 runs: 4.7 ms against 0.013 ms for the raw
+            # form. That is the accepted price — #1094 requires the instant-correct
+            # behaviour, and an expression index on julianday(timestamp) would restore the
+            # SEARCH but is a schema migration, which is not authorised here.
+            # tests/test_temporal_query_plan.py pins this plan and this budget; if an
+            # expression index ever lands, the plan assertion flips to SEARCH and that
+            # test is the thing to revisit.
             now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
             week_ago = (now_utc - timedelta(days=7)).isoformat()
             echo_clause, echo_params = exclusion_sql(excluded_wm_ids)

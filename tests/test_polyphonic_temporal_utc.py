@@ -61,10 +61,19 @@ def db(tmp_path):
     sqlite3.connect(str(path)).close()
 
 
-def _insert(path, mid, age_hours, *, aware=False):
-    """Store one row ``age_hours`` old. ``aware`` writes an offset-bearing timestamp."""
+def _insert(path, mid, age_hours, *, aware=False, offset_hours=0):
+    """Store one row ``age_hours`` old.
+
+    ``aware`` writes an offset-bearing timestamp; ``offset_hours`` is that offset, so 0 is
+    the case where the written digits happen to match the instant. A non-zero offset is what
+    separates a TEXT comparison from julianday().
+    """
     moment = datetime.now(timezone.utc) - timedelta(hours=age_hours)
-    _stamp(path, mid, moment.isoformat() if aware else moment.replace(tzinfo=None).isoformat())
+    if not aware:
+        stamp = moment.replace(tzinfo=None).isoformat()
+    else:
+        stamp = moment.astimezone(timezone(timedelta(hours=offset_hours))).isoformat()
+    _stamp(path, mid, stamp)
 
 
 def _stamp(path, mid, stamp):
@@ -147,23 +156,38 @@ def test_older_rows_rank_below_newer_ones(db, non_utc_tz):
 
 
 def test_seven_day_window_is_utc(db, non_utc_tz):
-    """The window boundary is 7 days in UTC, for naive rows and for +00:00 rows.
+    """The window boundary is 7 days in UTC, for naive rows and for non-zero offsets.
 
-    The aware rows here are written at +00:00, whose digits match their UTC instant, so this
-    asserts window membership is clock-correct — not that mixed non-zero offsets are ordered
-    correctly in SQL. That is a separate defect: these are TEXT columns, so an offset-bearing
-    value compares on its written digits. julianday() fixes it and costs a 200x scan without
-    an expression index, which is out of scope here; see test_temporal_query_plan.py and the
-    comment in polyphonic_recall.py.
+    The offset rows are the load-bearing ones: these are TEXT columns, so a TEXT comparison
+    tests an offset-bearing row against its written digits rather than its instant. A row at
+    6d23h written as +05:00 reads as 5d18h of wall clock, and a row at 7d1h written as -05:00
+    reads as 7d6h — both land on the wrong side of a raw comparison and the right side of
+    julianday().
     """
     _insert(db, "inside", age_hours=24 * 6 + 23)   # 6d23h
     _insert(db, "outside", age_hours=24 * 7 + 1)  # 7d1h
-    _insert(db, "inside_aware", age_hours=24 * 6 + 23, aware=True)
-    _insert(db, "outside_aware", age_hours=24 * 7 + 1, aware=True)
+    _insert(db, "inside_offset", age_hours=24 * 6 + 23, aware=True, offset_hours=5)
+    _insert(db, "outside_offset", age_hours=24 * 7 + 1, aware=True, offset_hours=-5)
 
     ids = {r.memory_id for r in _temporal(db)}
-    assert "inside" in ids and "inside_aware" in ids, sorted(ids)
-    assert "outside" not in ids and "outside_aware" not in ids, sorted(ids)
+    assert "inside" in ids and "inside_offset" in ids, sorted(ids)
+    assert "outside" not in ids and "outside_offset" not in ids, sorted(ids)
+
+
+def test_mixed_formats_admit_the_newest_before_limit(db, non_utc_tz):
+    """25 rows, half naive and half offset-bearing: admission must follow the instant.
+
+    Interleaved on purpose. With a TEXT comparison the offset rows sort by their written
+    digits, so the wrong five get cut by LIMIT 20. This is the selection defect #1094 names,
+    and it is invisible in a same-format table.
+    """
+    for i in range(25):
+        _insert(db, f"m{i:02d}", age_hours=i, aware=bool(i % 2), offset_hours=5)
+
+    ids = [r.memory_id for r in _temporal(db)]
+    assert len(ids) == 20, len(ids)
+    assert "m00" in ids, "the newest row was not admitted"
+    assert "m24" not in ids, "the oldest row was admitted; the cut is not by recency"
 
 
 def test_invalid_and_null_timestamps_are_skipped(db, non_utc_tz):
