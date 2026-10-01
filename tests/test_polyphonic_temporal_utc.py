@@ -64,7 +64,11 @@ def db(tmp_path):
 def _insert(path, mid, age_hours, *, aware=False):
     """Store one row ``age_hours`` old. ``aware`` writes an offset-bearing timestamp."""
     moment = datetime.now(timezone.utc) - timedelta(hours=age_hours)
-    stamp = moment.isoformat() if aware else moment.replace(tzinfo=None).isoformat()
+    _stamp(path, mid, moment.isoformat() if aware else moment.replace(tzinfo=None).isoformat())
+
+
+def _stamp(path, mid, stamp):
+    """Store one row with an exact timestamp string."""
     conn = sqlite3.connect(str(path))
     conn.execute(
         "INSERT INTO working_memory (id, content, source, timestamp, session_id, importance) "
@@ -143,13 +147,23 @@ def test_older_rows_rank_below_newer_ones(db, non_utc_tz):
 
 
 def test_seven_day_window_is_utc(db, non_utc_tz):
-    """The window boundary is 7 days in UTC. A row just inside must not drop out."""
+    """The window boundary is 7 days in UTC, for naive rows and for +00:00 rows.
+
+    The aware rows here are written at +00:00, whose digits match their UTC instant, so this
+    asserts window membership is clock-correct — not that mixed non-zero offsets are ordered
+    correctly in SQL. That is a separate defect: these are TEXT columns, so an offset-bearing
+    value compares on its written digits. julianday() fixes it and costs a 200x scan without
+    an expression index, which is out of scope here; see test_temporal_query_plan.py and the
+    comment in polyphonic_recall.py.
+    """
     _insert(db, "inside", age_hours=24 * 6 + 23)   # 6d23h
     _insert(db, "outside", age_hours=24 * 7 + 1)  # 7d1h
+    _insert(db, "inside_aware", age_hours=24 * 6 + 23, aware=True)
+    _insert(db, "outside_aware", age_hours=24 * 7 + 1, aware=True)
 
     ids = {r.memory_id for r in _temporal(db)}
-    assert "inside" in ids, sorted(ids)
-    assert "outside" not in ids, sorted(ids)
+    assert "inside" in ids and "inside_aware" in ids, sorted(ids)
+    assert "outside" not in ids and "outside_aware" not in ids, sorted(ids)
 
 
 def test_invalid_and_null_timestamps_are_skipped(db, non_utc_tz):
@@ -176,5 +190,6 @@ def test_top20_admits_the_newest_rows(db, non_utc_tz):
         _insert(db, f"m{i:02d}", age_hours=i)  # m00 is the newest
 
     ids = [r.memory_id for r in _temporal(db)]
-    assert len(ids) <= 20, len(ids)
+    assert len(ids) == 20, len(ids)
     assert "m00" in ids, "the newest row was not admitted"
+    assert "m24" not in ids, "the oldest row was admitted; the cut is not by recency"

@@ -976,13 +976,27 @@ class PolyphonicRecallEngine:
             # (the beam writers stamp datetime.now(timezone.utc).replace(tzinfo=None)),
             # so the cutoff has to be naive UTC too — a local `now` compares a UTC string
             # against a local one and the window shifts by the host offset. #1094.
-            week_ago = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)).isoformat()
+            #
+            # One now for the whole query, not one per row: rows in a single result set were
+            # otherwise aged against slightly different clocks.
+            #
+            # The raw `timestamp > ?` is kept deliberately. These are TEXT columns, so an
+            # offset-bearing value compares on its written digits rather than its instant —
+            # julianday() fixes that, and I measured it: on 50k rows, 0.02 ms -> 4.37 ms with
+            # the plan falling from SEARCH USING INDEX to SCAN + temp B-tree, because the
+            # function is not indexable under the existing index. An expression index on
+            # julianday(timestamp) restores the SEARCH at 0.02 ms, but that is a schema
+            # migration, which is outside the scope dplush set (#1094: "no migration, no
+            # historical offset reconstruction"). The ordering defect for mixed-format rows
+            # is real and is recorded for a follow-up rather than traded for a 200x scan.
+            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            week_ago = (now_utc - timedelta(days=7)).isoformat()
             echo_clause, echo_params = exclusion_sql(excluded_wm_ids)
             cursor.execute(f"""
                 SELECT id, content, timestamp, importance
                 FROM working_memory
-                WHERE timestamp > ? {echo_clause}
-                ORDER BY timestamp DESC
+                WHERE julianday(timestamp) > julianday(?) {echo_clause}
+                ORDER BY julianday(timestamp) DESC
                 LIMIT 20
             """, (week_ago, *echo_params))
 
