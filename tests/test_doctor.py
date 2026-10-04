@@ -441,6 +441,12 @@ def test_runtime_metadata_is_retained_in_safe_doctor_artifacts(
         assert detail in json_artifact
         assert detail in markdown_artifact
 
+    # The scope must survive canonical rendering, not just the raw payload: a
+    # report that carries a scope on each check but never states which
+    # interpreter those scopes describe is the gap #813 reports.
+    assert "cli_interpreter" in json_artifact
+    assert "cli_interpreter" in markdown_artifact
+
 
 def test_safe_preview_redacts_cjk_labeled_secret():
     """CJK-labelled secrets must be redacted in doctor previews (issue #806)."""

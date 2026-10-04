@@ -55,6 +55,24 @@ def test_scope_survives_the_doctor_adapter():
         assert c.get("scope") == "cli_interpreter", c
 
 
+def test_scope_row_reaches_the_report():
+    """The producer's own scope row must survive the allowlist filter.
+
+    `_sanitize_runtime_diagnostics` drops any check whose name is not in
+    `_RUNTIME_CHECK_NAMES`. Adding the row to the producer is not enough on its
+    own: without the name registered it is filtered out, and the report then
+    carries a scope on every check without ever saying which interpreter those
+    scopes describe -- which is the gap #813 is about.
+    """
+    from mnemosyne.doctor import RuntimeDiagnosticsAdapter, _RUNTIME_CHECK_NAMES
+
+    assert "checks_scope" in _RUNTIME_CHECK_NAMES, sorted(_RUNTIME_CHECK_NAMES)
+
+    metrics = RuntimeDiagnosticsAdapter().inspect().metrics
+    names = {c["check"] for c in metrics["checks"]}
+    assert "checks_scope" in names, sorted(names)
+
+
 def test_scope_is_machine_readable_not_only_prose():
     """The payload, not just the human print, must carry the scope."""
     payload = collect_runtime_diagnostics()

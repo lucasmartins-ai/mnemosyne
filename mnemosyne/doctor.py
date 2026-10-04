@@ -489,6 +489,7 @@ _RUNTIME_CHECK_NAMES = frozenset(
         "python_version",
         "platform",
         "python_executable",
+        "checks_scope",
         "mnemosyne_version",
         "fastembed",
         "sqlite_vec",
@@ -1398,9 +1399,16 @@ def render_doctor_markdown(payload: dict[str, Any]) -> str:
                 if not isinstance(check, dict) or not isinstance(check.get("check"), str):
                     continue
                 detail = safe_preview(check.get("detail", ""), max_length=240)
+                rendered = {"status": check.get("status"), "detail": detail}
+                # Render the scope too: a human reading the markdown report is
+                # exactly the reader #813's report reached, and a scope that only
+                # exists in the JSON payload is no use to them.
+                scope = check.get("scope")
+                if isinstance(scope, str) and scope:
+                    rendered["scope"] = scope
                 lines.append(
                     f"- {_markdown_scalar(check['check'])}: "
-                    f"`{_compact_json({'status': check.get('status'), 'detail': detail})}`"
+                    f"`{_compact_json(rendered)}`"
                 )
     else:
         lines.append(f"- status: `{_compact_json(runtime_diagnostics)}`")
