@@ -328,6 +328,7 @@ def test_runtime_diagnostics_marks_sqlite_vec_available_only_after_loading(monke
             "check": "sqlite_vec_available",
             "status": "YES",
             "detail": "",
+            "scope": "cli_interpreter",
         }
         for check in result["checks"]
     )
@@ -391,6 +392,8 @@ def test_runtime_metadata_is_retained_in_safe_doctor_artifacts(
         lambda: {
             "status": "ok",
             "checks": [
+                # No `scope`: this stands in for a producer that predates #813,
+                # so the boundary must label it rather than drop the entry.
                 {"check": check, "status": "OK", "detail": detail}
                 for check, detail in metadata.items()
             ],
@@ -403,6 +406,7 @@ def test_runtime_metadata_is_retained_in_safe_doctor_artifacts(
             "check": check,
             "status": "OK",
             "detail": safe_metadata[check],
+            "scope": "unscoped",
         }
         for check in metadata
     ]
@@ -415,7 +419,7 @@ def test_runtime_metadata_is_retained_in_safe_doctor_artifacts(
             runtime_diagnostics={
                 "status": "ok",
                 "checks": [
-                    {"check": check, "status": "OK", "detail": detail}
+                    {"check": check, "status": "OK", "detail": detail, "scope": "cli_interpreter"}
                     for check, detail in metadata.items()
                 ],
             },

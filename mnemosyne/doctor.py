@@ -535,6 +535,12 @@ def _sanitize_runtime_diagnostics(runtime: Any) -> dict[str, Any]:
             "check": entry["check"],
             "status": entry["status"],
             "detail": _safe_runtime_detail(entry["check"], entry.get("detail", "")),
+            # Carry the scope through the boundary rather than dropping it: a
+            # report that strips it leaves a green dependency result reading as a
+            # statement about whichever runtime serves recall (#813). The value is
+            # a fixed literal from the producer, and an entry without one is
+            # labelled unknown rather than silently promoted.
+            "scope": entry.get("scope") or "unscoped",
         }
         for entry in runtime["checks"]
         if isinstance(entry, dict)

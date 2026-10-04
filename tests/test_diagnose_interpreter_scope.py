@@ -38,6 +38,23 @@ def test_every_dep_check_declares_the_interpreter_it_ran_in():
         )
 
 
+def test_scope_survives_the_doctor_adapter():
+    """The adapter rebuilds each check entry; scope must not be dropped there.
+
+    test_doctor.py pins the adapter's exact output shape, so a scope added to the
+    raw payload but dropped on the way to the report would give a green CLI and a
+    silent gap in the machine-readable surface. That is the same false green
+    #813 reports, one hop downstream.
+    """
+    from mnemosyne.doctor import RuntimeDiagnosticsAdapter
+
+    metrics = RuntimeDiagnosticsAdapter().inspect().metrics
+    checks = metrics["checks"]
+    assert checks, "expected the adapter to expose runtime checks"
+    for c in checks:
+        assert c.get("scope") == "cli_interpreter", c
+
+
 def test_scope_is_machine_readable_not_only_prose():
     """The payload, not just the human print, must carry the scope."""
     payload = collect_runtime_diagnostics()
