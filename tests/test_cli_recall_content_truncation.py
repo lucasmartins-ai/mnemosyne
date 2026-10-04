@@ -65,5 +65,46 @@ def test_json_output_still_carries_full_content():
     assert json.loads(json.dumps({"query": "q", "results": payload}))["results"][0]["content"] == LONG
 
 
+def _run_cmd_recall(monkeypatch, args):
+    """Drive the real command entry point with a stubbed memory backend.
+
+    The renderer tests above cover the content and the character counts, but
+    they cannot catch a break in how `--preview` is parsed or forwarded. This
+    exercises cmd_recall end to end so that wiring is covered too.
+    """
+    from mnemosyne import cli
+
+    captured = {}
+
+    class _StubMemory:
+        def recall(self, query, top_k=5, explain=False):
+            captured["called"] = (query, top_k, explain)
+            return [{"id": "x", "content": LONG, "score": 0.5}]
+
+    monkeypatch.setattr(cli, "_get_memory", lambda: _StubMemory())
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cli.cmd_recall(args)
+    return buf.getvalue(), captured
+
+
+def test_cmd_recall_prints_whole_record_by_default(monkeypatch):
+    out, captured = _run_cmd_recall(monkeypatch, ["network"])
+    assert captured["called"] == ("network", 5, False)
+    assert "192.168.2.0/24" in out, "the default path must not truncate the record"
+
+
+def test_cmd_recall_preview_flag_is_parsed_and_applies_the_cap(monkeypatch):
+    out, _ = _run_cmd_recall(monkeypatch, ["network", "--preview"])
+    assert "Content truncated: showing 150 of" in out
+    assert "192.168.2.0/24" not in out
+
+
+def test_cmd_recall_json_flag_is_parsed_and_stays_complete(monkeypatch):
+    out, _ = _run_cmd_recall(monkeypatch, ["network", "--json"])
+    payload = json.loads(out)
+    assert payload["results"][0]["content"] == LONG
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
