@@ -448,6 +448,49 @@ def test_runtime_metadata_is_retained_in_safe_doctor_artifacts(
     assert "cli_interpreter" in markdown_artifact
 
 
+@pytest.mark.parametrize(
+    "raw_scope",
+    [
+        {"leak": "doctor-scope-private-secret"},
+        ["doctor-scope-private-secret"],
+        "doctor-scope-private-secret" * 50,
+        "doctor-scope-private-secret",
+        "",
+        None,
+    ],
+)
+def test_runtime_scope_is_normalized_at_the_report_boundary(raw_scope):
+    """Only known scope labels reach the artifacts; anything else is unscoped.
+
+    ``doctor_report_payload`` also accepts reports from producers that bypass
+    the adapter, so a dict, list, unbounded or unknown string in ``scope`` must
+    not be serialized as-is into the content-safe JSON or Markdown artifact.
+    """
+
+    payload = doctor_report_payload(
+        DoctorReport(
+            bank_name="default",
+            runtime_diagnostics={
+                "status": "ok",
+                "checks": [
+                    {"check": "python_version", "status": "OK", "detail": "3.13.5", "scope": raw_scope},
+                    {"check": "checks_scope", "status": "OK", "detail": "cli_interpreter", "scope": "cli_interpreter"},
+                ],
+            },
+        )
+    )
+    json_artifact = render_doctor_json(payload)
+    markdown_artifact = render_doctor_markdown(payload)
+
+    scopes = {
+        check["check"]: check["scope"]
+        for check in json.loads(json_artifact)["runtime_diagnostics"]["checks"]
+    }
+    assert scopes == {"python_version": "unscoped", "checks_scope": "cli_interpreter"}
+    assert "doctor-scope-private-secret" not in json_artifact
+    assert "doctor-scope-private-secret" not in markdown_artifact
+
+
 def test_safe_preview_redacts_cjk_labeled_secret():
     """CJK-labelled secrets must be redacted in doctor previews (issue #806)."""
     # nosec - test fixture

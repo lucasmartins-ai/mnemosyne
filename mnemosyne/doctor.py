@@ -21,7 +21,7 @@ import tempfile
 from typing import Any
 
 from mnemosyne.core.filters import SECRET_LABELED_PATTERNS
-from mnemosyne.runtime_diagnostics import CALLING_INTERPRETER_SCOPE
+from mnemosyne.runtime_diagnostics import CALLING_INTERPRETER_SCOPE, RUNTIME_SCOPES
 
 
 STATUS_OK = "ok"
@@ -519,6 +519,22 @@ def _safe_runtime_detail(check: str, value: Any) -> str:
     return _RUNTIME_ABSOLUTE_PATH.sub("<redacted-path>", detail)
 
 
+_UNSCOPED = "unscoped"
+
+
+def _safe_runtime_scope(value: Any) -> str:
+    """Return a known scope label, never a producer-supplied free-form value.
+
+    The scope is a closed enum. Anything else -- a missing key, a dict or list,
+    an unbounded or unknown string -- becomes ``unscoped`` rather than being
+    serialized into the report or promoted to a scope it never claimed (#813).
+    """
+
+    if isinstance(value, str) and value in RUNTIME_SCOPES:
+        return value
+    return _UNSCOPED
+
+
 def _sanitize_runtime_diagnostics(runtime: Any) -> dict[str, Any]:
     """Apply the Doctor report boundary to runtime checks from any producer."""
 
@@ -539,10 +555,9 @@ def _sanitize_runtime_diagnostics(runtime: Any) -> dict[str, Any]:
             "detail": _safe_runtime_detail(entry["check"], entry.get("detail", "")),
             # Carry the scope through the boundary rather than dropping it: a
             # report that strips it leaves a green dependency result reading as a
-            # statement about whichever runtime serves recall (#813). The value is
-            # a fixed literal from the producer, and an entry without one is
-            # labelled unknown rather than silently promoted.
-            "scope": entry.get("scope") or "unscoped",
+            # statement about whichever runtime serves recall (#813). Only known
+            # scope labels pass; anything else is labelled unscoped.
+            "scope": _safe_runtime_scope(entry.get("scope")),
         }
         for entry in runtime["checks"]
         if isinstance(entry, dict)
