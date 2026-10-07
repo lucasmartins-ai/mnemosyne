@@ -21,6 +21,7 @@ import tempfile
 from typing import Any
 
 from mnemosyne.core.filters import SECRET_LABELED_PATTERNS
+from mnemosyne.runtime_diagnostics import CALLING_INTERPRETER_SCOPE
 
 
 STATUS_OK = "ok"
@@ -554,11 +555,15 @@ def _sanitize_runtime_diagnostics(runtime: Any) -> dict[str, Any]:
 class RuntimeDiagnosticsAdapter:
     """Expose pure runtime/dependency checks without constructing Mnemosyne."""
 
+    def __init__(self, scope: str = CALLING_INTERPRETER_SCOPE) -> None:
+        # The caller states its interpreter's role; Doctor cannot infer it.
+        self.scope = scope
+
     def inspect(self) -> AdapterResult:
         try:
             from mnemosyne.runtime_diagnostics import collect_runtime_diagnostics
 
-            result = collect_runtime_diagnostics()
+            result = collect_runtime_diagnostics(scope=self.scope)
         except Exception:
             return AdapterResult(
                 metrics={"status": STATUS_UNKNOWN, "error_class": "runtime_error"}
@@ -1183,18 +1188,22 @@ def build_doctor_report(
     db_path: str | Path,
     scan_limit: int = DEFAULT_SCAN_LIMIT,
     candidate_limit: int = 20,
+    *,
+    runtime_scope: str = CALLING_INTERPRETER_SCOPE,
 ) -> DoctorReport:
     """Build a complete report using only runtime checks and a read-only DB.
 
     The function intentionally does not invoke ``Mnemosyne``, provider setup,
     diagnostics repair, cleanup, reindexing, or embedding work.
+    ``runtime_scope`` names the role of the interpreter running the runtime
+    checks (see ``mnemosyne.runtime_diagnostics.RUNTIME_SCOPES``).
     """
 
     scan_limit = _validate_scan_limit(scan_limit)
     embedding_runtime = _embedding_runtime_status()
     report = DoctorReport(
         bank_name=bank_name,
-        runtime_diagnostics=RuntimeDiagnosticsAdapter().inspect().metrics,
+        runtime_diagnostics=RuntimeDiagnosticsAdapter(runtime_scope).inspect().metrics,
         embeddings=EmbeddingsStatusAdapter(
             None, scan_limit=scan_limit, runtime=embedding_runtime
         ).inspect().metrics,

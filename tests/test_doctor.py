@@ -292,7 +292,7 @@ def test_doctor_runtime_dependency_failure_is_safe_and_unknown(tmp_path, monkeyp
     sqlite3.connect(db_path).close()
     raw_secret = "runtime-diagnostics-private-secret"  # nosec - regression fixture
 
-    def fail_runtime_diagnostics():
+    def fail_runtime_diagnostics(**_kwargs):
         raise RuntimeError(f"dependency capability failed: password={raw_secret}")
 
     monkeypatch.setattr("mnemosyne.runtime_diagnostics.collect_runtime_diagnostics", fail_runtime_diagnostics)
@@ -328,7 +328,7 @@ def test_runtime_diagnostics_marks_sqlite_vec_available_only_after_loading(monke
             "check": "sqlite_vec_available",
             "status": "YES",
             "detail": "",
-            "scope": "cli_interpreter",
+            "scope": "calling_interpreter",
         }
         for check in result["checks"]
     )
@@ -389,7 +389,7 @@ def test_runtime_metadata_is_retained_in_safe_doctor_artifacts(
     }
     monkeypatch.setattr(
         "mnemosyne.runtime_diagnostics.collect_runtime_diagnostics",
-        lambda: {
+        lambda **_kwargs: {
             "status": "ok",
             "checks": [
                 # No `scope`: this stands in for a producer that predates #813,
